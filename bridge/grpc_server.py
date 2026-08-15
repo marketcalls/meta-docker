@@ -191,8 +191,15 @@ def _trade_request_dict(message):
 
 class BridgeService(pb_grpc.MT5BridgeServicer):
     async def Health(self, request, context):
-        connected = await asyncio.to_thread(core.is_connected)
-        return pb.HealthReply(connected=connected)
+        # Cached supervisor state, matching GET /health; `session` moves
+        # only when the bridge attaches to a terminal it was not attached
+        # to a moment ago, so a client can tell an idle gap from a restart
+        state = core.session_snapshot()
+        return pb.HealthReply(
+            connected=state["connected"],
+            session=state["id"],
+            connected_since=state["since"] or 0.0,
+        )
 
     async def GetAccount(self, request, context):
         data = await _guard(context, core.get_account)

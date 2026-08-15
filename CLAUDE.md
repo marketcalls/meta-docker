@@ -59,6 +59,18 @@ by the operator, never a default.
 before closing. Closing before `accept()` makes the ASGI server return a
 bare HTTP 403 and the close code never reaches the client.
 
+**`connect_loop` supervises, it does not return.** The terminal restarts
+underneath the bridge in normal operation, because the container watchdog
+revives it. A connect loop that exits after the first success leaves every
+request answering 503 until someone calls `POST /initialize` by hand. It
+must keep watching and re-attach.
+
+**A new connection bumps `core._session`.** The counter moves only on a
+transition from disconnected to connected, and it is what lets a client
+tell an idle gap from a terminal restart. `/health` and the gRPC `Health`
+RPC both report it from cached state, so neither makes the terminal do
+work. Do not make `/health` hit IPC again: it is unauthenticated.
+
 ## Changing the API
 
 `docs/API.md` is the contract. When an endpoint, parameter bound, status

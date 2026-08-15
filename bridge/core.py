@@ -10,6 +10,7 @@ import logging
 import os
 import re
 import threading
+import time
 from datetime import datetime, timezone
 
 import MetaTrader5 as mt5
@@ -17,6 +18,13 @@ import MetaTrader5 as mt5
 logger = logging.getLogger("mt5bridge")
 
 _mt5_lock = threading.Lock()
+
+# Terminal session state. The counter increments every time the bridge
+# establishes a connection to a terminal that it was not connected to a
+# moment ago, so a client that reconnects can tell "same terminal, I was
+# just idle" from "new terminal session, I have a hole in my data".
+_session_lock = threading.Lock()
+_session = {"id": 0, "connected": False, "since": None}
 
 # Symbols are the only free-form strings that reach the terminal, so they
 # are held to the shape brokers actually use: starts alphanumeric, then
@@ -133,8 +141,42 @@ def mt5_error(message):
     return BridgeError(message, code, description)
 
 
+def session_snapshot():
+    """Current terminal session: id, connected flag and start time."""
+    with _session_lock:
+        return dict(_session)
+
+
+def _mark_connected():
+    """Record a live connection, starting a new session if it is new.
+
+    The id only moves on a transition from down to up, so repeated calls
+    from ordinary requests do not make clients think they reconnected.
+    """
+    with _session_lock:
+        if not _session["connected"]:
+            _session["id"] += 1
+            _session["since"] = time.time()
+            _session["connected"] = True
+            return _session["id"], True
+        return _session["id"], False
+
+
+def _mark_disconnected():
+    with _session_lock:
+        was_connected = _session["connected"]
+        _session["connected"] = False
+        return was_connected
+
+
 def is_connected():
-    return call(lambda: mt5.terminal_info()) is not None
+    """Live IPC check, which also refreshes the cached session state."""
+    alive = call(lambda: mt5.terminal_info()) is not None
+    if alive:
+        _mark_connected()
+    else:
+        _mark_disconnected()
+    return alive
 
 
 def ensure_connected():
@@ -159,8 +201,12 @@ def try_initialize():
     path = os.getenv("MT5_PATH")
     with _mt5_lock:
         if path:
-            return mt5.initialize(path, **kwargs)
-        return mt5.initialize(**kwargs)
+            connected = mt5.initialize(path, **kwargs)
+        else:
+            connected = mt5.initialize(**kwargs)
+    if connected:
+        _mark_connected()
+    return connected
 
 
 def shutdown():
@@ -168,29 +214,59 @@ def shutdown():
 
 
 async def connect_loop():
-    """Keep trying to attach to the terminal; returns once connected."""
+    """Attach to the terminal and keep it attached.
+
+    This supervises rather than returning after the first success. The
+    container watchdog restarts terminal64.exe on its own, and a bridge
+    that stopped watching would answer 503 to every request until someone
+    called POST /initialize by hand. Re-attaching is the whole point of
+    running this next to a process that can restart underneath it.
+
+    MT5_INIT_RETRIES bounds the consecutive failures in one attach cycle,
+    not the lifetime of the bridge: a successful attach resets the count,
+    so a terminal that dies again later gets the full retry budget again.
+    """
     attempts = int(os.getenv("MT5_INIT_RETRIES", "0"))  # 0 = retry forever
     delay = float(os.getenv("MT5_INIT_RETRY_SECONDS", "5"))
-    attempt = 0
+    watch = max(float(os.getenv("MT5_WATCH_SECONDS", "5")), 1.0)
+    failures = 0
     while True:
-        attempt += 1
-        if await asyncio.to_thread(try_initialize):
-            info = call(lambda: mt5.terminal_info())
-            logger.info(
-                "Connected to terminal build %s at %s",
-                getattr(info, "build", "unknown"),
-                getattr(info, "path", "unknown"),
+        try:
+            if await asyncio.to_thread(is_connected):
+                failures = 0
+                await asyncio.sleep(watch)
+                continue
+
+            if _mark_disconnected():
+                logger.warning("Terminal connection lost, re-attaching")
+
+            failures += 1
+            if await asyncio.to_thread(try_initialize):
+                info = call(lambda: mt5.terminal_info())
+                logger.info(
+                    "Connected to terminal build %s at %s (session %d)",
+                    getattr(info, "build", "unknown"),
+                    getattr(info, "path", "unknown"),
+                    session_snapshot()["id"],
+                )
+                failures = 0
+                continue
+
+            label = f"{failures}/{attempts}" if attempts > 0 else str(failures)
+            logger.warning(
+                "initialize attempt %s failed: %s", label, call(lambda: mt5.last_error())
             )
-            return
-        label = f"{attempt}/{attempts}" if attempts > 0 else str(attempt)
-        logger.warning(
-            "initialize attempt %s failed: %s", label, call(lambda: mt5.last_error())
-        )
-        if 0 < attempts <= attempt:
-            logger.error(
-                "Giving up after %d attempts; POST /initialize to retry", attempts
-            )
-            return
+            if 0 < attempts <= failures:
+                logger.error(
+                    "Giving up after %d attempts; POST /initialize to retry", attempts
+                )
+                return
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            # The supervisor is what keeps /health honest, so it must not
+            # die on an unexpected error from the terminal or the wire
+            logger.exception("Connection supervisor hit an unexpected error")
         await asyncio.sleep(delay)
 
 

@@ -178,7 +178,7 @@ _portal_enabled = os.getenv("BRIDGE_PORTAL", "1").strip().lower() in {"1", "true
 app = FastAPI(
     title="MT5 Bridge",
     description="Language-agnostic HTTP and WebSocket API over the MetaTrader 5 terminal",
-    version="1.0.0",
+    version="1.0.1",
     lifespan=lifespan,
     docs_url="/docs" if _docs_enabled else None,
     redoc_url="/redoc" if _docs_enabled else None,
@@ -238,8 +238,24 @@ async def _value_error_handler(request: Request, exc: ValueError):
 
 @app.get("/health")
 def health():
-    """Liveness probe. Deliberately the only unauthenticated endpoint."""
-    return {"status": "ok", "connected": core.is_connected()}
+    """Liveness probe. Deliberately the only unauthenticated endpoint.
+
+    Served from the supervisor's cached state rather than a live IPC
+    call, so an anonymous caller cannot make the terminal do work.
+
+    `session` increments every time the bridge attaches to a terminal it
+    was not attached to a moment ago. A client that reconnects after a
+    dropped stream can compare it with the value it saw before: unchanged
+    means it was merely idle, higher means the terminal restarted and any
+    data in between has to be backfilled.
+    """
+    state = core.session_snapshot()
+    return {
+        "status": "ok",
+        "connected": state["connected"],
+        "session": state["id"],
+        "connected_since": state["since"],
+    }
 
 
 @api.post("/initialize")

@@ -87,11 +87,26 @@ non-loopback `BRIDGE_HOST`.
 Liveness probe, the only endpoint that never requires auth.
 
 ```json
-{"status": "ok", "connected": true}
+{"status": "ok", "connected": true, "session": 1, "connected_since": 1781227214.6}
 ```
 
 `connected: false` means the bridge is up but still attaching to the
 terminal (or the terminal is not logged in). Poll until true after startup.
+
+`session` increments every time the bridge attaches to a terminal it was
+not attached to a moment ago. It does not move while a connection simply
+stays up, so a client that reconnects can compare it with the value it
+saw before: unchanged means it was merely idle, higher means the terminal
+restarted and there is a hole in the data. `connected_since` is the unix
+time that session began, or `null` before the first connection.
+
+The response is served from cached state, so it never makes the terminal
+do work and can be polled freely.
+
+The bridge supervises the connection: if the terminal dies it re-attaches
+on its own, and `POST /initialize` is only needed when `MT5_INIT_RETRIES`
+is set to a finite number and the retries were exhausted. See
+[recovering after a restart](#recovering-after-a-terminal-restart).
 
 ### POST /initialize
 
@@ -430,7 +445,7 @@ run protoc on the proto file.
 
 | RPC | Type | Purpose |
 | --- | --- | --- |
-| Health | unary | liveness + terminal connection |
+| Health | unary | liveness, terminal connection, session counter |
 | GetAccount / GetTick / GetRates | unary | snapshots |
 | GetPositions / GetPendingOrders | unary | portfolio |
 | MarketOrder | unary | market order with filling fallback |
@@ -528,6 +543,51 @@ while True:
 The portal does this automatically: all three of its streams reconnect
 3s after an unexpected close.
 
+## Recovering after a terminal restart
+
+The terminal can restart underneath a running bridge: it crashes, the
+broker logs it out, or the container watchdog revives it. The bridge
+supervises that connection rather than assuming the first attach lasts
+forever.
+
+What happens, in order:
+
+1. The terminal goes. Open WebSocket streams close with `1011` and the
+   reason `Not connected to a MetaTrader 5 terminal`; gRPC streams end
+   with `UNAVAILABLE`. Requests return `503`. The bridge never serves
+   stale data in place of a live answer.
+2. `GET /health` flips to `connected: false` within `MT5_WATCH_SECONDS`
+   (default 5).
+3. The bridge re-attaches by itself, retrying every
+   `MT5_INIT_RETRY_SECONDS`. `POST /initialize` is only needed when
+   `MT5_INIT_RETRIES` is a finite number and the retries ran out.
+4. On success `session` increments and `connected_since` is stamped.
+
+Your open positions are not affected by any of this. They live on the
+broker's server, not in the terminal.
+
+**How a client detects a gap.** Record `session` alongside your data.
+After a reconnect, read `/health` again:
+
+```python
+before = requests.get(f"{base}/health", headers=headers).json()["session"]
+
+# ... stream, then the stream drops and you reconnect ...
+
+after = requests.get(f"{base}/health", headers=headers).json()["session"]
+if after != before:
+    # The terminal restarted. Anything between the last tick you saw and
+    # now is missing, so backfill before trusting the live stream again.
+    backfill(since=last_seen_time_msc)
+```
+
+This matters because a resumed lossless tick stream does not replay an
+arbitrarily long backlog. If the terminal's tick history is more than
+`BRIDGE_TICK_MAX_BACKFILL_MS` (default 10s) behind the live tick when the
+stream starts, the stale portion is skipped so a fresh client is not
+flooded with hours of history. The skip is logged, but the only signal
+your client gets is the changed `session`, so check it.
+
 ## Configuration reference
 
 | Variable | Default | Meaning |
@@ -552,7 +612,8 @@ The portal does this automatically: all three of its streams reconnect
 | `MT5_LOGIN` / `MT5_PASSWORD` / `MT5_SERVER` | unset | broker auto-login |
 | `MT5_PORTABLE` | 0 | terminal runs in /portable mode |
 | `MT5_TIMEOUT_MS` | 60000 | IPC timeout passed to initialize() |
-| `MT5_INIT_RETRIES` / `MT5_INIT_RETRY_SECONDS` | 0 / 5 | startup attach retries; 0 retries forever |
+| `MT5_INIT_RETRIES` / `MT5_INIT_RETRY_SECONDS` | 0 / 5 | consecutive attach failures before giving up, and the delay between them; 0 retries forever |
+| `MT5_WATCH_SECONDS` | 5 | how often the supervisor checks the terminal is still there |
 | `VNC_PASSWORD` | unset | noVNC password, minimum 8 characters (docker) |
 | `SCREEN_RESOLUTION` | 1280x800x24 | Xvfb resolution (docker) |
 | `BIND_ADDR` | 127.0.0.1 | host interface compose publishes ports on |

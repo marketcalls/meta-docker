@@ -2,5 +2,5 @@ MetaTrader5>=5.0.45
 fastapi>=0.115
 uvicorn>=0.30
 websockets>=12
-grpcio>=1.66
-protobuf>=5.26
+grpcio>=1.83
+protobuf>=7.35.1

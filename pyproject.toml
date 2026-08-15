@@ -1,6 +1,6 @@
 [project]
 name = "metasdk"
-version = "1.0.0"
+version = "1.0.1"
 description = "Headless MetaTrader 5 with a REST, WebSocket and gRPC bridge for Windows, Linux and macOS"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -9,11 +9,11 @@ dependencies = [
     "fastapi>=0.115",
     "uvicorn>=0.30",
     "websockets>=12",
-    "grpcio>=1.66",
-    "protobuf>=5.26",
+    "grpcio>=1.83",
+    "protobuf>=7.35.1",
 ]
 
 [dependency-groups]
 dev = [
-    "grpcio-tools>=1.66",
+    "grpcio-tools>=1.83",
 ]

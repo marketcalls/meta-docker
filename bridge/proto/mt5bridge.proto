@@ -9,6 +9,11 @@ message Empty {}
 
 message HealthReply {
   bool connected = 1;
+  // Increments each time the bridge attaches to a terminal it was not
+  // attached to a moment ago. A client that compares this with the value
+  // it last saw can tell an idle gap from a terminal restart.
+  int64 session = 2;
+  double connected_since = 3;
 }
 
 message Account {
