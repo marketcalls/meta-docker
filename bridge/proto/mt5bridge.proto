@@ -1,0 +1,202 @@
+syntax = "proto3";
+
+package mt5bridge;
+
+// Language-agnostic gRPC surface over the MetaTrader 5 terminal.
+// Mirrors the REST API in bridge/app.py; see docs/API.md.
+
+message Empty {}
+
+message HealthReply {
+  bool connected = 1;
+}
+
+message Account {
+  int64 login = 1;
+  string server = 2;
+  string currency = 3;
+  double balance = 4;
+  double equity = 5;
+  double profit = 6;
+  double margin = 7;
+  double margin_free = 8;
+  double margin_level = 9;
+  int64 leverage = 10;
+  bool trade_allowed = 11;
+  string name = 12;
+}
+
+message SymbolRequest {
+  string symbol = 1;
+}
+
+message Tick {
+  string symbol = 1;
+  int64 time = 2;
+  double bid = 3;
+  double ask = 4;
+  double last = 5;
+  uint64 volume = 6;
+  int64 time_msc = 7;
+  uint32 flags = 8;
+  double volume_real = 9;
+}
+
+message RatesRequest {
+  string symbol = 1;
+  string timeframe = 2;   // M1..MN1, default M1
+  int32 count = 3;        // default 100
+  int32 start_pos = 4;    // bars back from newest, default 0
+  string time_from = 5;   // unix seconds or ISO-8601, optional
+  string time_to = 6;     // unix seconds or ISO-8601, optional
+}
+
+message Rate {
+  int64 time = 1;
+  double open = 2;
+  double high = 3;
+  double low = 4;
+  double close = 5;
+  uint64 tick_volume = 6;
+  int32 spread = 7;
+  uint64 real_volume = 8;
+}
+
+message RatesReply {
+  string symbol = 1;
+  string timeframe = 2;
+  repeated Rate rates = 3;
+}
+
+message PositionsRequest {
+  string symbol = 1;      // empty = all symbols
+}
+
+message Position {
+  int64 ticket = 1;
+  string symbol = 2;
+  int32 type = 3;         // 0 buy, 1 sell
+  double volume = 4;
+  double price_open = 5;
+  double price_current = 6;
+  double sl = 7;
+  double tp = 8;
+  double profit = 9;
+  double swap = 10;
+  int64 magic = 11;
+  string comment = 12;
+  int64 time_msc = 13;
+}
+
+message PositionsReply {
+  repeated Position positions = 1;
+}
+
+message PendingOrder {
+  int64 ticket = 1;
+  string symbol = 2;
+  int32 type = 3;
+  double volume_current = 4;
+  double price_open = 5;
+  double sl = 6;
+  double tp = 7;
+  int64 magic = 8;
+  string comment = 9;
+  int64 time_setup_msc = 10;
+}
+
+message PendingOrdersReply {
+  repeated PendingOrder orders = 1;
+}
+
+message MarketOrderRequest {
+  string symbol = 1;
+  string side = 2;        // "buy" or "sell"
+  double volume = 3;
+  double sl = 4;          // 0 = none
+  double tp = 5;          // 0 = none
+  int32 deviation = 6;    // 0 = default 20
+  int64 magic = 7;
+  string comment = 8;
+}
+
+// Raw mt5.order_send/order_check request. Only fields you set are
+// forwarded (proto3 omits zero values), matching the official dict API.
+message TradeRequest {
+  int32 action = 1;
+  string symbol = 2;
+  double volume = 3;
+  int32 type = 4;
+  double price = 5;
+  double sl = 6;
+  double tp = 7;
+  double stoplimit = 8;
+  int32 deviation = 9;
+  int64 magic = 10;
+  string comment = 11;
+  int32 type_time = 12;
+  int32 type_filling = 13;
+  int64 position = 14;
+  int64 position_by = 15;
+  int64 order = 16;
+  int64 expiration = 17;
+}
+
+message TradeResult {
+  uint32 retcode = 1;
+  int64 deal = 2;
+  int64 order = 3;
+  double volume = 4;
+  double price = 5;
+  string comment = 6;
+  uint32 request_id = 7;
+}
+
+message CheckResult {
+  uint32 retcode = 1;
+  double balance = 2;
+  double equity = 3;
+  double profit = 4;
+  double margin = 5;
+  double margin_free = 6;
+  double margin_level = 7;
+  string comment = 8;
+}
+
+message CloseRequest {
+  int64 ticket = 1;
+  int32 deviation = 2;    // 0 = default 20
+}
+
+message StreamTicksRequest {
+  repeated string symbols = 1;
+  string mode = 2;        // "all" (lossless, default) or "latest" (sampled)
+  int32 interval_ms = 3;  // poll interval, min 50, default 100
+}
+
+message StreamAccountRequest {
+  int32 interval_ms = 1;  // min 100, default 500
+  bool only_changes = 2;  // true = emit only when a field changed
+}
+
+message StreamPositionsRequest {
+  int32 interval_ms = 1;  // min 100, default 500
+}
+
+service MT5Bridge {
+  rpc Health(Empty) returns (HealthReply);
+  rpc GetAccount(Empty) returns (Account);
+  rpc GetTick(SymbolRequest) returns (Tick);
+  rpc GetRates(RatesRequest) returns (RatesReply);
+  rpc GetPositions(PositionsRequest) returns (PositionsReply);
+  rpc GetPendingOrders(PositionsRequest) returns (PendingOrdersReply);
+
+  rpc MarketOrder(MarketOrderRequest) returns (TradeResult);
+  rpc SendOrder(TradeRequest) returns (TradeResult);
+  rpc CheckOrder(TradeRequest) returns (CheckResult);
+  rpc ClosePosition(CloseRequest) returns (TradeResult);
+
+  rpc StreamTicks(StreamTicksRequest) returns (stream Tick);
+  rpc StreamAccount(StreamAccountRequest) returns (stream Account);
+  rpc StreamPositions(StreamPositionsRequest) returns (stream PositionsReply);
+}

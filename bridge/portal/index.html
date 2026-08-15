@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>MT5 Bridge Console</title>
+<link rel="stylesheet" href="/portal/static/style.css">
+</head>
+<body>
+
+<header>
+  <div class="header-inner">
+    <div class="brand">
+      <span class="brand-mark"></span>
+      <span>MT5 Bridge</span>
+      <span class="light">Console</span>
+    </div>
+    <div class="status">
+      <span id="conn-led" class="dot"></span>
+      <span id="conn-text">checking terminal...</span>
+    </div>
+    <span id="mode-badge" class="badge">checking</span>
+    <div class="grow"></div>
+    <label class="field field-wide">
+      <span class="label">Key</span>
+      <input id="api-key" type="password" class="mono" autocomplete="off" spellcheck="false"
+             placeholder="paste your X-API-Key">
+    </label>
+    <button id="key-apply" class="btn btn-sm btn-primary" type="button">Connect</button>
+  </div>
+</header>
+
+<main>
+  <div class="col-left">
+
+    <section class="card">
+      <div class="metrics">
+        <div class="metric" style="min-width:190px">
+          <div class="row" style="margin-bottom:4px">
+            <h2 class="label">Account</h2>
+            <span id="acct-led" class="dot"></span>
+          </div>
+          <div id="acct-meta" class="note" style="margin:0">disconnected</div>
+          <div id="acct-account" class="note" style="margin-top:4px">no account data yet</div>
+          <div class="join" style="margin-top:8px">
+            <button id="src-ws" class="btn btn-sm" type="button">WebSocket</button>
+            <button id="src-grpc" class="btn btn-sm" type="button">gRPC relay</button>
+            <button id="src-stop" class="btn btn-sm" type="button">Stop</button>
+          </div>
+        </div>
+        <div class="divider"></div>
+        <div class="metric"><div class="label">Balance</div><div id="m-balance" class="big num">--</div></div>
+        <div class="divider"></div>
+        <div class="metric"><div class="label">Equity</div><div id="m-equity" class="big num" style="color:var(--brand)">--</div></div>
+        <div class="divider"></div>
+        <div class="metric"><div class="label">Floating P&amp;L</div><div id="m-profit" class="big num">--</div></div>
+        <div class="divider"></div>
+        <div class="metric"><div class="label">Free margin</div><div id="m-margin-free" class="big num">--</div></div>
+      </div>
+    </section>
+
+    <div class="split">
+      <section class="card">
+        <div class="card-head">
+          <h2 class="label">Order ticket</h2>
+          <span id="trade-badge" class="badge badge-warn">live orders</span>
+        </div>
+        <form id="order-form" class="stack">
+          <label class="field">
+            <span class="label">Symbol</span>
+            <input id="o-symbol" value="EURUSD" maxlength="32" autocomplete="off">
+          </label>
+          <div class="join join-half">
+            <button type="button" id="o-buy" class="btn btn-buy">BUY</button>
+            <button type="button" id="o-sell" class="btn">SELL</button>
+          </div>
+          <label class="field">
+            <span class="label">Qty (lots)</span>
+            <input id="o-volume" type="number" step="0.01" min="0.01" value="0.01" class="num">
+          </label>
+          <div class="pair">
+            <label class="field">
+              <span class="label">SL</span>
+              <input id="o-sl" type="number" step="0.00001" min="0" class="num" placeholder="none">
+            </label>
+            <label class="field">
+              <span class="label">TP</span>
+              <input id="o-tp" type="number" step="0.00001" min="0" class="num" placeholder="none">
+            </label>
+          </div>
+          <button type="submit" id="o-submit" class="btn btn-primary">Place order</button>
+        </form>
+        <div id="order-result" class="result"></div>
+      </section>
+
+      <section class="card">
+        <div class="card-head">
+          <h2 class="label">API keys</h2>
+          <span id="keys-mode" class="badge">checking</span>
+        </div>
+        <div id="keys-locked" class="note" style="margin:0">
+          Sign in with an admin key to manage API keys.
+        </div>
+        <div id="keys-panel" class="hidden">
+          <div class="row" style="margin-bottom:12px">
+            <label class="field grow">
+              <span class="label">Label</span>
+              <input id="key-label" maxlength="64" placeholder="my-trading-bot" autocomplete="off">
+            </label>
+            <button id="key-create" class="btn btn-primary" type="button">Generate</button>
+          </div>
+          <div id="key-new" class="callout hidden">
+            <div>New key, shown once:</div>
+            <code id="key-new-value" class="mono"></code>
+            <div class="row">
+              <button id="key-copy" class="btn btn-sm" type="button">Copy</button>
+              <button id="key-use" class="btn btn-sm btn-primary" type="button">Use in console</button>
+            </div>
+          </div>
+          <div class="scroll">
+            <table>
+              <thead><tr><th>Label</th><th>Key</th><th>Scope</th><th></th></tr></thead>
+              <tbody id="keys-body"></tbody>
+            </table>
+          </div>
+          <p class="note">Keys are stored hashed. A lost key cannot be recovered, only revoked and replaced.</p>
+        </div>
+      </section>
+    </div>
+
+    <section class="card">
+      <div class="card-head">
+        <h2 class="label">Open positions</h2>
+        <span id="pos-led" class="dot"></span>
+      </div>
+      <div class="scroll">
+        <table class="num">
+          <thead><tr><th>Ticket</th><th>Symbol</th><th>Side</th><th>Qty</th><th>Avg price</th><th>P&amp;L</th><th></th></tr></thead>
+          <tbody id="pos-body"><tr><td colspan="7" class="empty">no open positions</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
+  </div>
+
+  <div class="col-right">
+    <section class="card">
+      <div class="card-head">
+        <h2 class="label">Price stream</h2>
+        <span id="tick-led" class="dot"></span>
+        <span id="tick-meta" class="note" style="margin:0">disconnected</span>
+        <div class="grow"></div>
+        <button id="tick-toggle" class="btn btn-sm btn-primary" type="button">Connect</button>
+      </div>
+      <div class="row" style="margin-bottom:12px">
+        <label class="field grow" style="min-width:176px">
+          <span class="label">Symbols</span>
+          <input id="tick-symbols" value="EURUSD,XAUUSD" maxlength="200" autocomplete="off">
+        </label>
+        <select id="tick-source">
+          <option value="grpc">gRPC</option>
+          <option value="ws">WebSocket</option>
+        </select>
+        <select id="tick-mode">
+          <option value="all">lossless</option>
+          <option value="latest">sampled</option>
+        </select>
+      </div>
+      <div class="scroll ticks">
+        <table class="num mono">
+          <thead><tr><th>Time</th><th>Symbol</th><th>Bid</th><th>Ask</th><th>Spread</th></tr></thead>
+          <tbody id="tick-body"></tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+</main>
+
+<footer>
+  REST :8001 &middot; gRPC :8002 &middot; reference: docs/API.md &middot; orders placed here are real; not investment advice
+</footer>
+
+<script src="/portal/static/app.js"></script>
+</body>
+</html>

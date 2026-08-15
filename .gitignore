@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.pyc
+logs/
+
+# Secrets and generated credentials: never commit these
+.env
+docker/.env
+api_keys.json
+*.pem
+*.key
+
+.DS_Store

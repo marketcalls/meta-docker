@@ -1,0 +1,83 @@
+# Ports publish to 127.0.0.1 by default. Docker's published ports bypass
+# most host firewalls, so binding 0.0.0.0 here would put a trading API on
+# the public internet the moment the container starts. Change BIND_ADDR
+# only behind a TLS-terminating reverse proxy.
+services:
+  mt5:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: metasdk-mt5
+    platform: linux/amd64
+    container_name: metasdk-mt5
+    environment:
+      - TZ=${TZ:-UTC}
+      # 0.0.0.0 is the container's own interface, not the host's; the
+      # published port below decides what the outside world can reach
+      - BRIDGE_HOST=0.0.0.0
+      - BRIDGE_PORT=8001
+      - BRIDGE_GRPC_PORT=8002
+      - BRIDGE_KEYS_FILE=/data/api_keys.json
+      # Authentication. Leave BRIDGE_API_KEY unset to have the bridge mint
+      # an admin key on first boot and print it to the log:
+      #   docker compose logs mt5 | grep -A2 "X-API-Key"
+      - BRIDGE_API_KEY=${BRIDGE_API_KEY:-}
+      # Set to 1 to serve market data but reject every order
+      - BRIDGE_READ_ONLY=${BRIDGE_READ_ONLY:-}
+      # Browser origins allowed to open portal WebSockets; same origin by default
+      - BRIDGE_ALLOWED_ORIGINS=${BRIDGE_ALLOWED_ORIGINS:-}
+      - BRIDGE_RATE_LIMIT=${BRIDGE_RATE_LIMIT:-600}
+      # Set when a reverse proxy fronts the bridge, so X-Forwarded-For is
+      # trusted from that address and nowhere else
+      - BRIDGE_TRUSTED_PROXIES=${BRIDGE_TRUSTED_PROXIES:-}
+      # Broker auto-login, from docker/.env (gitignored)
+      - MT5_LOGIN=${MT5_LOGIN:-}
+      - MT5_PASSWORD=${MT5_PASSWORD:-}
+      - MT5_SERVER=${MT5_SERVER:-}
+      # Required before the noVNC desktop accepts connections from outside
+      - VNC_PASSWORD=${VNC_PASSWORD:-}
+      - SCREEN_RESOLUTION=${SCREEN_RESOLUTION:-1280x800x24}
+    ports:
+      - "${BIND_ADDR:-127.0.0.1}:8001:8001"   # REST and WebSocket API
+      - "${BIND_ADDR:-127.0.0.1}:8002:8002"   # gRPC
+      - "${BIND_ADDR:-127.0.0.1}:6080:6080"   # noVNC desktop
+    volumes:
+      # Persist only the terminal (program, broker login, history). The rest
+      # of the wineprefix, including Wine-side Python packages, comes from
+      # the image so dependency updates apply on rebuild.
+      - type: volume
+        source: mt5_terminal
+        target: /opt/wineprefix/drive_c/Program Files/MetaTrader 5
+      - mt5_logs:/var/log/mt5
+      - bridge_data:/data
+    restart: unless-stopped
+    # Wine executes Windows binaries, so the container is treated as a
+    # blast radius to be contained rather than trusted
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    ulimits:
+      nofile:
+        soft: 4096
+        hard: 8192
+    deploy:
+      resources:
+        limits:
+          memory: ${MEMORY_LIMIT:-4g}
+    healthcheck:
+      test: ["CMD", "curl", "-fs", "http://127.0.0.1:8001/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 180s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  mt5_terminal:
+  mt5_logs:
+  bridge_data:
